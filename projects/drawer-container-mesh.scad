@@ -1,6 +1,10 @@
 // Drawer Organization System - Container with Decorative Mesh Pattern
 // All dimensions in mm, based on multiples of 8mm
 
+/* [Printer Settings] */
+// Nozzle diameter in mm
+nozzle_diameter = 0.6; // [0.2, 0.4, 0.6, 0.8]
+
 /* [Container Dimensions] */
 // Width of container in grid units (1 unit = 8mm)
 width_units = 10; // [1:50]
@@ -21,17 +25,27 @@ wall_thickness = 2.4; // [1.6:0.8:4.0]
 corner_radius = 4; // [0:1:16]
 
 /* [Stacking Features] */
-// Enable stacking features
+// Enable stacking features (inset bottom)
 stackable = true; // [true, false]
 
-// Stacking lip height in mm
+// Inset height at bottom for stacking in mm
 lip_height = 3.2; // [2.4:0.8:4.8]
 
-// Stacking lip width in mm
+// Inset width from edge at bottom for stacking in mm
 lip_width = 3.2; // [2.4:0.8:4.8]
 
-// Tolerance for fit between containers (mm)
-tolerance = 0.2; // [0:0.1:1]
+// Calculate tolerance based on nozzle diameter
+// Using half of the nozzle diameter as recommended
+calculated_tolerance = nozzle_diameter / 2;
+
+// Allow manual override of the calculated tolerance
+manual_tolerance_override = false; // [true, false]
+
+// Manual tolerance setting (only used if override is enabled)
+manual_tolerance = 0.2; // [0:0.05:1]
+
+// Final tolerance value to use
+tolerance = manual_tolerance_override ? manual_tolerance : calculated_tolerance;
 
 /* [Mesh Pattern] */
 // Enable mesh pattern
@@ -45,6 +59,9 @@ mesh_size = 8; // [4:1:16]
 
 // Mesh wall thickness in mm
 mesh_thickness = 1.6; // [1.2:0.4:2.4]
+
+// Mesh safe zone (solid border) in mm
+mesh_safe_zone = 13; // [1:0.5:5]
 
 /* [Additional Features] */
 // Add finger notch for easy access
@@ -64,12 +81,17 @@ inner_width = width - (2 * wall_thickness);
 inner_depth = depth - (2 * wall_thickness);
 inner_height = height - floor_thickness;
 
+// Display tolerance information
+echo("Using nozzle diameter: ", nozzle_diameter);
+echo("Calculated tolerance: ", calculated_tolerance);
+echo("Final tolerance used: ", tolerance);
+
 // Create container
 module container() {
     difference() {
-        // Single unified outer shell - includes everything
+        // Single unified outer shell with inset bottom for stacking
         hull() {
-            // Bottom corners - NARROWER at z=0 by lip_width
+            // Bottom corners - NARROWER at z=0 by lip_width for the inset stacking feature
             for (x = [lip_width + corner_radius, width - lip_width - corner_radius]) {
                 for (y = [lip_width + corner_radius, depth - lip_width - corner_radius]) {
                     translate([x, y, 0])
@@ -77,7 +99,7 @@ module container() {
                 }
             }
             
-            // Points at lip_height (full width/depth)
+            // Points at lip_height (full width/depth where the inset transitions to full width)
             for (x = [corner_radius, width - corner_radius]) {
                 for (y = [corner_radius, depth - corner_radius]) {
                     translate([x, y, lip_height])
@@ -92,41 +114,19 @@ module container() {
                     sphere(r = corner_radius);
                 }
             }
-            
-            // Top lip corner points
-            for (x = [corner_radius, width - corner_radius]) {
-                for (y = [corner_radius, depth - corner_radius]) {
-                    translate([x, y, height + lip_height - corner_radius])
-                    sphere(r = corner_radius);
-                }
-            }
         }
         
-        // Inner cutout for the container cavity
+        // Inner cutout for the container cavity - only up to the main container height, not extended
         translate([wall_thickness, wall_thickness, floor_thickness])
-        cube([inner_width, inner_depth, height + lip_height]);
-        
-        // Inner cutout for the top lip
-        translate([lip_width, lip_width, height])
-        hull() {
-            for (x = [corner_radius, width - 2*lip_width - corner_radius]) {
-                for (y = [corner_radius, depth - 2*lip_width - corner_radius]) {
-                    translate([x, y, 0])
-                    cylinder(h = lip_height + 0.01, r = corner_radius);
-                    
-                    translate([x, y, lip_height - corner_radius])
-                    sphere(r = corner_radius);
-                }
-            }
-        }
+        cube([inner_width, inner_depth, height]);
         
         // Mesh pattern cutouts
         if (mesh_pattern) {
-            // Space for pattern only exists above the bevel and below the top edge
+            // Space for pattern only exists above the bevel and below the top edge minus the safe zone
             pattern_start_z = lip_height + floor_thickness + mesh_thickness;
             
-            // Reserve space at top for a clean border
-            pattern_height = height - pattern_start_z - mesh_thickness*2;
+            // Pattern height now considers the fixed safe zone at top
+            pattern_height = height - pattern_start_z - mesh_safe_zone;
             
             if (pattern_height > mesh_size) {
                 // Create mesh pattern based on selected style
@@ -178,13 +178,9 @@ module hexagonal_mesh(start_z, height) {
     hex_height = mesh_size * sqrt(3)/2;
     wall_offset = wall_thickness + mesh_thickness;
     
-    // Calculate top safe zone for finishing border
-    //top_safe_zone = height - hex_height - mesh_thickness;
-    top_safe_zone = height - mesh_thickness;
-    
     // Front face
     for (x = [wall_offset : hex_width*1.5 : width - wall_offset]) {
-        for (z = [start_z : hex_height*2 : start_z + top_safe_zone]) {
+        for (z = [start_z : hex_height*2 : start_z + height]) {
             translate([x, wall_thickness/2, z])
             rotate([90, 0, 0])
             cylinder(h = wall_thickness+0.1, r = hex_width/2, $fn=6, center = true);
@@ -197,7 +193,7 @@ module hexagonal_mesh(start_z, height) {
     
     // Back face
     for (x = [wall_offset : hex_width*1.5 : width - wall_offset]) {
-        for (z = [start_z : hex_height*2 : start_z + top_safe_zone]) {
+        for (z = [start_z : hex_height*2 : start_z + height]) {
             translate([x, depth - wall_thickness/2, z])
             rotate([90, 0, 0])
             cylinder(h = wall_thickness+0.1, r = hex_width/2, $fn=6, center = true);
@@ -210,7 +206,7 @@ module hexagonal_mesh(start_z, height) {
     
     // Left face
     for (y = [wall_offset : hex_width*1.5 : depth - wall_offset]) {
-        for (z = [start_z : hex_height*2 : start_z + top_safe_zone]) {
+        for (z = [start_z : hex_height*2 : start_z + height]) {
             translate([wall_thickness/2, y, z])
             rotate([0, 90, 0])
             cylinder(h = wall_thickness+0.1, r = hex_width/2, $fn=6, center = true);
@@ -223,7 +219,7 @@ module hexagonal_mesh(start_z, height) {
     
     // Right face
     for (y = [wall_offset : hex_width*1.5 : depth - wall_offset]) {
-        for (z = [start_z : hex_height*2 : start_z + top_safe_zone]) {
+        for (z = [start_z : hex_height*2 : start_z + height]) {
             translate([width - wall_thickness/2, y, z])
             rotate([0, 90, 0])
             cylinder(h = wall_thickness+0.1, r = hex_width/2, $fn=6, center = true);
@@ -283,12 +279,9 @@ module square_mesh(start_z, height) {
     spacing = square_size * 1.5;
     wall_offset = wall_thickness + mesh_thickness;
     
-    // Calculate top safe zone for finishing border
-    top_safe_zone = height - square_size;
-    
     // Front face
     for (x = [wall_offset : spacing : width - wall_offset]) {
-        for (z = [start_z : spacing : start_z + top_safe_zone]) {
+        for (z = [start_z : spacing : start_z + height]) {
             translate([x, 0, z])
             cube([square_size, wall_thickness + 0.1, square_size], center = false);
         }
@@ -296,7 +289,7 @@ module square_mesh(start_z, height) {
     
     // Back face
     for (x = [wall_offset : spacing : width - wall_offset]) {
-        for (z = [start_z : spacing : start_z + top_safe_zone]) {
+        for (z = [start_z : spacing : start_z + height]) {
             translate([x, depth - wall_thickness - 0.05, z])
             cube([square_size, wall_thickness + 0.1, square_size], center = false);
         }
@@ -304,7 +297,7 @@ module square_mesh(start_z, height) {
     
     // Left face
     for (y = [wall_offset : spacing : depth - wall_offset]) {
-        for (z = [start_z : spacing : start_z + top_safe_zone]) {
+        for (z = [start_z : spacing : start_z + height]) {
             translate([0, y, z])
             cube([wall_thickness + 0.1, square_size, square_size], center = false);
         }
@@ -312,7 +305,7 @@ module square_mesh(start_z, height) {
     
     // Right face
     for (y = [wall_offset : spacing : depth - wall_offset]) {
-        for (z = [start_z : spacing : start_z + top_safe_zone]) {
+        for (z = [start_z : spacing : start_z + height]) {
             translate([width - wall_thickness - 0.05, y, z])
             cube([wall_thickness + 0.1, square_size, square_size], center = false);
         }
@@ -325,10 +318,7 @@ module lines_mesh(start_z, height) {
     line_thickness = mesh_size / 4;
     wall_offset = wall_thickness + mesh_thickness;
     
-    // Calculate top safe zone for finishing border
-    top_safe_zone = height - line_thickness;
-    
-    for (z = [start_z : line_spacing * 2 : start_z + top_safe_zone]) {
+    for (z = [start_z : line_spacing * 2 : start_z + height]) {
         // Front face lines
         translate([wall_offset, 0, z])
         cube([width - 2*wall_offset, wall_thickness + 0.1, line_thickness], center = false);
